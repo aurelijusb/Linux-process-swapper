@@ -12,4 +12,13 @@ Usage
 -----
 Pass path to program as command line parameter or open using graphical dialog.
 
+For example, to swap firefox:
+	python swap.py firefox http://www.google.com
+And then press Stop
 
+
+-----
+Futures and known bugs
+-----
++ Recursive start, stop
++ BUG: termination can be "hard close" or not work at all

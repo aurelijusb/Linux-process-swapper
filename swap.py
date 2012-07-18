@@ -13,7 +13,7 @@ Usage:
 
 @author Aurelijus Banelis
 @license LGPL
-@version 1.1.1
+@version 1.1.2
 '''
 
 import subprocess
@@ -22,21 +22,28 @@ pygtk.require('2.0')
 import gtk
 import gobject
 import sys
-class Swapper:
+import os
 
+class Swapper:
+    SIGTERM = 15
     SIGCONT = 18
     SIGSTOP = 19
     SECOND = 1000
+    PATH_PS = '/bin/ps'
+    PATH_KILL = '/bin/kill'
 
     process = None
     paused = False
     command = None
+    recursive = False
     
     #
     # GUI
     #
     
-    def __init__(self, command=None):       
+    def __init__(self, command=None):
+        if (type(command) is str):
+            command = [command]
         self.command = command
         
         self.window = gtk.Window(gtk.WINDOW_TOPLEVEL)
@@ -67,9 +74,12 @@ class Swapper:
         self.window.add(hbox)
         self.window.show()
         
-        self.timer_id = gobject.timeout_add(self.SECOND, self.update_status)
+        self.timer_id = gobject.timeout_add(self.SECOND,
+                                            self.update_status)
+        self.recursive = os.path.isfile(self.PATH_PS) & os.path.isfile(self.PATH_KILL)
         if (command != None):
             self.start()
+
 
     def show_open_dialog(self):
         dialog = gtk.FileChooserDialog(title="Choose program",
@@ -100,9 +110,9 @@ class Swapper:
                 return False
                 
             if (self.paused):
-                self.label_status.set_label('Paused: ' + self.command)
+                self.label_status.set_label('Paused: ' + self.get_name())
             else:
-                self.label_status.set_label('Running: ' + self.command)
+                self.label_status.set_label('Running: ' + self.get_name())
                 
         else:
             self.label_status.set_label('Not started');
@@ -122,37 +132,71 @@ class Swapper:
             self.show_open_dialog()
             
         if (self.command != None):
-            if (self.process == None):
+            if (self.process != None):
+                self.continue_process()
+            else:
                 try:
                     self.process = subprocess.Popen(self.command)
                 except OSError:
                     self.process = None
-                    self.show_message("Can not open: " + self.command)
+                    self.show_message("Can not open: " + self.get_name())
                     self.command = None
                     return
-                    
-            else:
-                self.process.send_signal(self.SIGCONT)
-                self.paused = False
-                
+               
             self.button_start.hide()
             self.button_pause.show()
             self.button_terminate.show()
         
+    def continue_process(self):
+        if (self.process != None):
+            self.process.send_signal(self.SIGCONT)
+            self.paused = False
+            if (self.recursive):
+                for pid in self.get_childs():
+                    self.send_signal(pid, self.SIGCONT)
         
     def pause(self, widget=None, args=None):
         self.button_pause.hide()
         self.button_start.set_label('Continue')
         self.button_start.show()
+        self.pause_process();
         
+    def pause_process(self):
         if (self.process != None):
             self.process.send_signal(self.SIGSTOP)
             self.paused = True
+            if (self.recursive):
+                for pid in self.get_childs():
+                    self.send_signal(pid, self.SIGSTOP)
 
     def terminate(self, widget=None, args=None):
         if (self.process != None):
-            self.process.terminate()
+            self.process.kill()
+            if (self.recursive):
+                for pid in self.get_childs():
+                    self.send_signal(pid, self.SIGTERM)
             gtk.main_quit()
+
+    def get_name(self):
+        return ' '.join(self.command)
+
+    def get_childs(self):
+        p = subprocess.Popen(self.PATH_PS + ' --ppid ' +
+                       str(self.process.pid), shell=True,
+                       stdout=subprocess.PIPE)
+        p.stdout.readline()
+        subprocesses = [];
+        while True:
+            inline = p.stdout.readline()
+            if not inline:
+                break
+            subprocesses.append(int(inline.split(' ')[0]));
+        return subprocesses
+        
+    def send_signal(self, pid, signal):
+        command = self.PATH_KILL + " -" + str(signal) + " " + str(pid)
+        subprocess.call(command, shell=True)
+    
 
 #
 # Using via command line
@@ -160,7 +204,9 @@ class Swapper:
 
 if __name__ == "__main__":
     if (len(sys.argv) > 1):
-        swapper = Swapper(sys.argv[1])
+        arguments = sys.argv
+        del arguments[0]
+        swapper = Swapper(arguments)
     else:
         swapper = Swapper()
     swapper.main()
